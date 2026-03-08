@@ -48,7 +48,7 @@ export function useValidation() {
 
   const processServerLogs = useCallback((serverLogs: Array<{ agent: string; message: string; status: string; timestamp: string }>) => {
     // Group logs by agent and process them with delays for visual effect
-    const agentOrder: AgentType[] = ['orchestrator', 'validation', 'retry', 'decision', 'whatsapp', 'confidence'];
+    const agentOrder: AgentType[] = ['orchestrator', 'decision', 'validation', 'activity', 'whatsapp', 'confidence', 'retry'];
     
     serverLogs.forEach((log, index) => {
       setTimeout(() => {
