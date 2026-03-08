@@ -89,6 +89,17 @@ export function BulkResultsDashboard({
 
   return (
     <div className="space-y-6">
+      {/* Export Bar */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => exportCSV(whatsappActive, whatsappNotActive)}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary/20 text-primary text-sm font-medium hover:bg-primary/30 transition-colors"
+        >
+          <Download className="w-4 h-4" />
+          Export All (CSV)
+        </button>
+      </div>
+
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <GlowCard variant="gradient" className="text-center py-4">
