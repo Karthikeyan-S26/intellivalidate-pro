@@ -12,10 +12,10 @@ export function Header() {
             </div>
             <div>
               <h1 className="text-xl font-bold text-foreground tracking-tight">
-                PhoneVerify<span className="text-primary">AI</span>
+                Valide<span className="text-primary">X AI</span>
               </h1>
               <p className="text-xs text-muted-foreground">
-                Multi-Agent Validation Engine
+                Bulk Validation & WhatsApp Intelligence
               </p>
             </div>
           </div>
