@@ -7,12 +7,14 @@ import {
   RefreshCw,
   MessageSquare,
   BarChart3,
+  Signal,
   Loader2
 } from "lucide-react";
 
 const agentIcons: Record<AgentType, typeof Network> = {
   orchestrator: Network,
   validation: CheckCircle2,
+  activity: Signal,
   decision: Brain,
   retry: RefreshCw,
   whatsapp: MessageSquare,

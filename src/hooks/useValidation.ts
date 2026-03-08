@@ -112,6 +112,7 @@ export function useValidation() {
           carrier: data.carrier,
           lineType: data.lineType as ValidationResult['lineType'],
           isValid: data.isValid,
+          isActive: data.isActive ?? data.isValid ?? true,
           whatsappStatus: data.whatsappStatus as ValidationResult['whatsappStatus'],
           confidenceScore: data.confidenceScore,
           costSaved: data.costSaved,

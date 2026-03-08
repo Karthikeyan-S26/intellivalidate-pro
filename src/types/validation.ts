@@ -12,7 +12,8 @@ export type AgentType =
   | 'decision' 
   | 'retry' 
   | 'whatsapp' 
-  | 'confidence';
+  | 'confidence'
+  | 'activity';
 
 export interface AgentStatus {
   name: AgentType;
@@ -28,6 +29,7 @@ export interface ValidationResult {
   carrier: string;
   lineType: 'mobile' | 'landline' | 'voip' | 'unknown';
   isValid: boolean;
+  isActive: boolean;
   whatsappStatus: 'verified' | 'not_found' | 'unchecked' | 'checking';
   confidenceScore: number;
   costSaved: number;
@@ -35,7 +37,22 @@ export interface ValidationResult {
   retryCount: number;
 }
 
+export interface BulkValidationResult {
+  results: ValidationResult[];
+  whatsappActive: ValidationResult[];
+  whatsappNotActive: ValidationResult[];
+  totalProcessed: number;
+  totalValid: number;
+  totalActive: number;
+  totalWhatsApp: number;
+  totalTime: number;
+}
+
 export interface ValidationRequest {
   phoneNumber: string;
   countryCode: string;
+}
+
+export interface BulkValidationRequest {
+  phoneNumbers: string[];
 }

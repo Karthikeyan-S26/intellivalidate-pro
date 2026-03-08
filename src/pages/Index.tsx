@@ -1,15 +1,19 @@
+import { useState } from "react";
 import { Header } from "@/components/Header";
-import { PhoneInput } from "@/components/PhoneInput";
+import { BulkUpload } from "@/components/BulkUpload";
 import { AgentTerminal } from "@/components/AgentTerminal";
 import { AgentStatusPanel } from "@/components/AgentStatusPanel";
-import { ValidationResults } from "@/components/ValidationResults";
+import { BulkResultsDashboard } from "@/components/BulkResultsDashboard";
+import { BulkProgress } from "@/components/BulkProgress";
+import { WhatsAppMessaging } from "@/components/WhatsAppMessaging";
 import { StatsBar } from "@/components/StatsBar";
-import { useValidation } from "@/hooks/useValidation";
-import { GlowCard } from "@/components/ui/GlowCard";
-import { Cpu, Sparkles } from "lucide-react";
+import { useBulkValidation } from "@/hooks/useBulkValidation";
+import { ValidationResult } from "@/types/validation";
+import { Sparkles } from "lucide-react";
 
 const Index = () => {
-  const { logs, agentStatuses, isProcessing, result, stats, validate } = useValidation();
+  const { logs, agentStatuses, isProcessing, bulkResult, progress, stats, validateBulk } = useBulkValidation();
+  const [messagingRecipients, setMessagingRecipients] = useState<ValidationResult[] | null>(null);
 
   return (
     <div className="min-h-screen bg-background">
@@ -24,64 +28,79 @@ const Index = () => {
           </div>
           
           <h2 className="text-4xl md:text-5xl font-bold text-foreground">
-            Real-Time Phone Validation
+            Bulk Phone Validation
             <br />
             <span className="text-primary">& WhatsApp Intelligence</span>
           </h2>
           
           <p className="text-muted-foreground max-w-2xl mx-auto">
-            Watch our autonomous AI agents validate phone numbers, detect WhatsApp presence, 
-            and calculate confidence scores in real-time with full reasoning transparency.
+            Upload up to 100 phone numbers. Our AI agents validate, detect active status, 
+            identify WhatsApp accounts, and enable bulk messaging — all with cross-provider verification.
           </p>
         </section>
 
         {/* Stats Bar */}
         <StatsBar {...stats} />
 
-        {/* Input Section */}
-        <GlowCard className="max-w-3xl mx-auto" variant="gradient">
-          <div className="flex items-center gap-2 mb-6">
-            <Cpu className="w-5 h-5 text-primary" />
-            <h3 className="font-semibold">Validation Input</h3>
-          </div>
-          <PhoneInput onValidate={validate} isLoading={isProcessing} />
-        </GlowCard>
+        {/* WhatsApp Messaging Modal */}
+        {messagingRecipients && (
+          <WhatsAppMessaging
+            recipients={messagingRecipients}
+            onClose={() => setMessagingRecipients(null)}
+          />
+        )}
+
+        {/* Bulk Upload */}
+        {!messagingRecipients && (
+          <BulkUpload onValidate={validateBulk} isLoading={isProcessing} />
+        )}
+
+        {/* Progress */}
+        {isProcessing && (
+          <BulkProgress
+            total={progress.total}
+            processed={progress.processed}
+            currentNumber={progress.currentNumber}
+            isComplete={false}
+          />
+        )}
 
         {/* Agent Status Panel */}
-        <section>
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">
-            Agent Pipeline Status
-          </h3>
-          <AgentStatusPanel agents={agentStatuses} />
-        </section>
+        {(isProcessing || bulkResult) && (
+          <section>
+            <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">
+              Agent Pipeline Status
+            </h3>
+            <AgentStatusPanel agents={agentStatuses} />
+          </section>
+        )}
 
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Agent Terminal */}
-          <section className="lg:row-span-2">
+        {/* Results Dashboard */}
+        {bulkResult && !messagingRecipients && (
+          <BulkResultsDashboard
+            whatsappActive={bulkResult.whatsappActive}
+            whatsappNotActive={bulkResult.whatsappNotActive}
+            onSelectForMessaging={setMessagingRecipients}
+          />
+        )}
+
+        {/* Agent Terminal */}
+        {(isProcessing || logs.length > 0) && (
+          <section>
             <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">
               Agent Reasoning Trace
             </h3>
-            <div className="h-[500px]">
+            <div className="h-[400px]">
               <AgentTerminal logs={logs} isProcessing={isProcessing} />
             </div>
           </section>
-
-          {/* Results Section */}
-          <section>
-            <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">
-              Validation Results
-            </h3>
-            <ValidationResults result={result} />
-          </section>
-        </div>
-
+        )}
 
         {/* Footer */}
         <footer className="text-center py-8 text-muted-foreground text-sm border-t border-border mt-12">
-          <p>PhoneVerifyAI — Multi-Agent Orchestration Engine</p>
+          <p>ValideX AI — Multi-Agent Bulk Validation Engine</p>
           <p className="text-xs mt-2">
-            Built with autonomous reasoning and self-healing capabilities
+            Cross-provider verification • Active number detection • WhatsApp intelligence • Bulk messaging
           </p>
         </footer>
       </main>
