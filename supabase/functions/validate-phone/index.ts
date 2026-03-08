@@ -14,6 +14,10 @@ interface AgentLog {
   timestamp: string;
 }
 
+function extractDigits(input: string): string {
+  return input.replace(/\D/g, '');
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -38,17 +42,36 @@ serve(async (req) => {
     const startTime = Date.now();
     let retryCount = 0;
 
+    // === SERVER-SIDE PRE-VALIDATION (10-digit rule) ===
+    const fullNumber = `${countryCode}${phoneNumber}`;
+    const digits = extractDigits(fullNumber);
+    if (digits.length < 10) {
+      addLog('validation', `REJECTED: ${fullNumber} has only ${digits.length} digits (minimum 10)`, 'error');
+      return new Response(JSON.stringify({
+        phoneNumber,
+        countryCode,
+        isValid: false,
+        isActive: false,
+        whatsappStatus: 'unchecked',
+        confidenceScore: 0,
+        error: `Number has only ${digits.length} digits — minimum 10 required`,
+        logs,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // === ORCHESTRATOR AGENT ===
     addLog('orchestrator', `Validating ${countryCode} ${phoneNumber}`, 'info');
 
     // === DECISION AGENT ===
     addLog('decision', `Analyzing country code ${countryCode} to select optimal providers`, 'thinking');
 
-    // === VALIDATION + ACTIVITY DETECTION + WHATSAPP AGENT (combined AI call for speed) ===
+    // === COMBINED AI ANALYSIS ===
     addLog('validation', 'Running multi-provider cross-verification...', 'thinking');
     addLog('activity', 'Initiating HLR lookup & reachability check...', 'thinking');
 
-    const fullAnalysisPrompt = `You are a phone intelligence system that cross-verifies phone data across multiple providers (NumVerify, Twilio, Abstract API, Neutrino, Telesign).
+    const analysisPrompt = `You are a phone intelligence system that cross-verifies phone data across multiple providers (NumVerify, Twilio, Abstract API, Neutrino, Telesign).
 
 Analyze this phone number comprehensively:
 Phone: ${countryCode} ${phoneNumber}
@@ -96,17 +119,16 @@ Be realistic: mobile numbers in high WhatsApp-penetration countries (India, Braz
         model: 'google/gemini-2.5-flash',
         messages: [
           { role: 'system', content: 'You are a phone intelligence expert simulating cross-provider verification. Always respond with valid JSON only, no markdown.' },
-          { role: 'user', content: fullAnalysisPrompt }
+          { role: 'user', content: analysisPrompt }
         ],
         temperature: 0.15,
       }),
     });
 
     if (!aiResponse.ok) {
-      addLog('retry', `Primary AI analysis failed (${aiResponse.status}). Retrying...`, 'warning');
+      addLog('retry', `Primary AI analysis failed (${aiResponse.status}). Retrying with fallback...`, 'warning');
       retryCount++;
-      
-      // Retry with fallback
+
       const retryResponse = await fetch(AI_GATEWAY_URL, {
         method: 'POST',
         headers: {
@@ -117,7 +139,7 @@ Be realistic: mobile numbers in high WhatsApp-penetration countries (India, Braz
           model: 'google/gemini-2.5-flash-lite',
           messages: [
             { role: 'system', content: 'Respond with valid JSON only.' },
-            { role: 'user', content: fullAnalysisPrompt }
+            { role: 'user', content: analysisPrompt }
           ],
           temperature: 0.1,
         }),
@@ -175,7 +197,7 @@ Be realistic: mobile numbers in high WhatsApp-penetration countries (India, Braz
         : `No WhatsApp detected (confidence: ${analysisData.whatsAppConfidence}%)`,
         whatsappStatus === 'verified' ? 'success' : 'warning');
     } else {
-      addLog('whatsapp', 'Skipped per Decision Agent', 'info');
+      addLog('whatsapp', 'Skipped per Decision Agent (landline)', 'info');
     }
 
     // === CONFIDENCE SCORING AGENT ===
