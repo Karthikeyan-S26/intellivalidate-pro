@@ -5,11 +5,12 @@ import { v4 as uuidv4 } from "uuid";
 
 const initialAgentStatuses: AgentStatus[] = [
   { name: 'orchestrator', displayName: 'Orchestrator', status: 'idle', icon: 'network' },
-  { name: 'validation', displayName: 'Validation', status: 'idle', icon: 'check' },
   { name: 'decision', displayName: 'Decision', status: 'idle', icon: 'brain' },
-  { name: 'retry', displayName: 'Retry', status: 'idle', icon: 'refresh' },
+  { name: 'validation', displayName: 'Validation', status: 'idle', icon: 'check' },
+  { name: 'activity', displayName: 'Activity Detection', status: 'idle', icon: 'signal' },
   { name: 'whatsapp', displayName: 'WhatsApp', status: 'idle', icon: 'message' },
   { name: 'confidence', displayName: 'Confidence', status: 'idle', icon: 'chart' },
+  { name: 'retry', displayName: 'Retry & Recovery', status: 'idle', icon: 'refresh' },
 ];
 
 export function useValidation() {
