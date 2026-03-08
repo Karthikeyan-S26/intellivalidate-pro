@@ -10,7 +10,9 @@ import {
   Globe,
   Radio,
   Shield,
+  Download,
 } from "lucide-react";
+import { exportCSV, exportWhatsAppActiveCSV, exportWhatsAppNotActiveCSV } from "@/lib/exportResults";
 
 interface BulkResultsDashboardProps {
   whatsappActive: ValidationResult[];
