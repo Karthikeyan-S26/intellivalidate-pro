@@ -117,9 +117,10 @@ export function useBulkValidation() {
       addLog('orchestrator', `[${i + 1}/${uniqueNumbers.length}] Processing ${phone}`, 'info');
 
       try {
+        updateAgentStatus('decision', 'active');
         updateAgentStatus('validation', 'active');
         updateAgentStatus('activity', 'active');
-        updateAgentStatus('decision', 'active');
+        updateAgentStatus('whatsapp', 'active');
 
         const { data, error } = await supabase.functions.invoke('validate-phone', {
           body: { phoneNumber: numberPart, countryCode }
