@@ -156,12 +156,10 @@ export function useBulkValidation() {
 
         allResults.push(result);
 
+        updateAgentStatus('decision', 'complete');
         updateAgentStatus('validation', 'complete');
         updateAgentStatus('activity', 'complete');
-        updateAgentStatus('decision', 'complete');
-        if (result.whatsappStatus !== 'unchecked') {
-          updateAgentStatus('whatsapp', 'complete');
-        }
+        updateAgentStatus('whatsapp', 'complete');
         updateAgentStatus('confidence', 'complete');
 
       } catch (err) {
