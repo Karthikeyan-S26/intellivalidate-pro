@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { AgentLog, AgentStatus, AgentType, ValidationResult, BulkValidationResult } from "@/types/validation";
 import { supabase } from "@/integrations/supabase/client";
 import { v4 as uuidv4 } from "uuid";
+import { extractDigits } from "@/lib/phoneValidation";
 
 const initialAgentStatuses: AgentStatus[] = [
   { name: 'orchestrator', displayName: 'Orchestrator', status: 'idle', icon: 'network' },
@@ -20,10 +21,10 @@ export function useBulkValidation() {
   const [bulkResult, setBulkResult] = useState<BulkValidationResult | null>(null);
   const [progress, setProgress] = useState({ total: 0, processed: 0, currentNumber: '' });
   const [stats, setStats] = useState({
-    totalValidations: 1247,
-    successRate: 98.4,
-    avgResponseTime: 342,
-    totalSaved: 156.78,
+    totalValidations: 0,
+    successRate: 0,
+    avgResponseTime: 0,
+    totalSaved: 0,
   });
 
   const addLog = useCallback((agent: AgentType, message: string, status: AgentLog['status']) => {
@@ -56,20 +57,48 @@ export function useBulkValidation() {
 
     const startTime = Date.now();
     const allResults: ValidationResult[] = [];
+    const rejectedNumbers: string[] = [];
 
     updateAgentStatus('orchestrator', 'active');
     addLog('orchestrator', `Bulk validation initiated for ${phoneNumbers.length} numbers`, 'info');
-    addLog('orchestrator', 'Normalizing and deduplicating phone numbers...', 'thinking');
+
+    // === PRE-VALIDATION: Enforce minimum 10-digit rule ===
+    addLog('orchestrator', 'Running pre-validation (minimum 10-digit rule)...', 'thinking');
+
+    const validQueue: string[] = [];
+    for (const phone of phoneNumbers) {
+      const digits = extractDigits(phone);
+      if (digits.length < 10) {
+        rejectedNumbers.push(phone);
+        addLog('orchestrator', `REJECTED: ${phone} — only ${digits.length} digits (minimum 10)`, 'warning');
+      } else if (digits.length > 15) {
+        rejectedNumbers.push(phone);
+        addLog('orchestrator', `REJECTED: ${phone} — ${digits.length} digits exceeds maximum 15`, 'warning');
+      } else {
+        validQueue.push(phone);
+      }
+    }
+
+    if (rejectedNumbers.length > 0) {
+      addLog('orchestrator', `Pre-validation: ${rejectedNumbers.length} number(s) rejected, ${validQueue.length} passed`, 'info');
+    }
 
     // Deduplicate
-    const uniqueNumbers = [...new Set(phoneNumbers)];
-    if (uniqueNumbers.length < phoneNumbers.length) {
-      addLog('orchestrator', `Removed ${phoneNumbers.length - uniqueNumbers.length} duplicate(s). Processing ${uniqueNumbers.length} unique numbers.`, 'info');
+    const uniqueNumbers = [...new Set(validQueue)];
+    if (uniqueNumbers.length < validQueue.length) {
+      addLog('orchestrator', `Removed ${validQueue.length - uniqueNumbers.length} duplicate(s). Processing ${uniqueNumbers.length} unique numbers.`, 'info');
+    }
+
+    if (uniqueNumbers.length === 0) {
+      addLog('orchestrator', 'No valid numbers to process after pre-validation.', 'error');
+      setIsProcessing(false);
+      updateAgentStatus('orchestrator', 'error');
+      return;
     }
 
     updateAgentStatus('orchestrator', 'complete');
 
-    // Process each number
+    // Process each number through the agent pipeline
     for (let i = 0; i < uniqueNumbers.length; i++) {
       const phone = uniqueNumbers[i];
       setProgress({ total: uniqueNumbers.length, processed: i, currentNumber: phone });
@@ -78,7 +107,6 @@ export function useBulkValidation() {
       let countryCode = '+1';
       let numberPart = phone;
       if (phone.startsWith('+')) {
-        // Extract country code (1-3 digits after +)
         const match = phone.match(/^\+(\d{1,3})/);
         if (match) {
           countryCode = `+${match[1]}`;
@@ -89,9 +117,9 @@ export function useBulkValidation() {
       addLog('orchestrator', `[${i + 1}/${uniqueNumbers.length}] Processing ${phone}`, 'info');
 
       try {
-        // Activate relevant agents
         updateAgentStatus('validation', 'active');
         updateAgentStatus('activity', 'active');
+        updateAgentStatus('decision', 'active');
 
         const { data, error } = await supabase.functions.invoke('validate-phone', {
           body: { phoneNumber: numberPart, countryCode }
@@ -127,9 +155,9 @@ export function useBulkValidation() {
 
         allResults.push(result);
 
-        // Update agent statuses for completed number
         updateAgentStatus('validation', 'complete');
         updateAgentStatus('activity', 'complete');
+        updateAgentStatus('decision', 'complete');
         if (result.whatsappStatus !== 'unchecked') {
           updateAgentStatus('whatsapp', 'complete');
         }
@@ -137,11 +165,12 @@ export function useBulkValidation() {
 
       } catch (err) {
         addLog('retry', `Failed to validate ${phone}: ${err instanceof Error ? err.message : 'Unknown'}`, 'error');
+        updateAgentStatus('retry', 'error');
       }
 
       setProgress({ total: uniqueNumbers.length, processed: i + 1, currentNumber: phone });
 
-      // Small delay between requests to avoid rate limiting
+      // Rate limiting delay
       if (i < uniqueNumbers.length - 1) {
         await new Promise(r => setTimeout(r, 300));
       }
@@ -167,17 +196,23 @@ export function useBulkValidation() {
     setBulkResult(bulkResult);
 
     // Update stats
-    setStats(prev => ({
-      totalValidations: prev.totalValidations + allResults.length,
-      successRate: Math.min(99.9, prev.successRate),
-      avgResponseTime: Math.round(totalTime / allResults.length),
-      totalSaved: prev.totalSaved + allResults.reduce((sum, r) => sum + r.costSaved, 0),
-    }));
+    const avgTime = allResults.length > 0 ? Math.round(totalTime / allResults.length) : 0;
+    const validCount = allResults.filter(r => r.isValid).length;
+    const rate = allResults.length > 0 ? Math.round((validCount / allResults.length) * 1000) / 10 : 0;
+
+    setStats({
+      totalValidations: allResults.length,
+      successRate: rate,
+      avgResponseTime: avgTime,
+      totalSaved: allResults.reduce((sum, r) => sum + r.costSaved, 0),
+    });
 
     addLog('orchestrator', `Bulk validation complete. ${allResults.length} numbers processed in ${totalTime}ms`, 'success');
+    if (rejectedNumbers.length > 0) {
+      addLog('orchestrator', `Pre-validation rejected: ${rejectedNumbers.length} number(s)`, 'warning');
+    }
     addLog('orchestrator', `WhatsApp Active: ${whatsappActive.length} | Not Active: ${whatsappNotActive.length}`, 'success');
 
-    // Mark all agents complete
     setAgentStatuses(prev => prev.map(a => ({ ...a, status: 'complete' as const })));
     setIsProcessing(false);
     setProgress({ total: uniqueNumbers.length, processed: uniqueNumbers.length, currentNumber: '' });

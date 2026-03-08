@@ -1,9 +1,10 @@
 import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { Upload, FileText, X, Plus, Loader2, AlertTriangle } from "lucide-react";
+import { Upload, FileText, X, Plus, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GlowCard } from "@/components/ui/GlowCard";
 import { Textarea } from "@/components/ui/textarea";
+import { parsePhoneNumbers, ParsedPhone } from "@/lib/phoneValidation";
 
 interface BulkUploadProps {
   onValidate: (phoneNumbers: string[]) => void;
@@ -14,27 +15,36 @@ export function BulkUpload({ onValidate, isLoading }: BulkUploadProps) {
   const [mode, setMode] = useState<'upload' | 'manual'>('manual');
   const [manualInput, setManualInput] = useState('');
   const [parsedNumbers, setParsedNumbers] = useState<string[]>([]);
+  const [invalidNumbers, setInvalidNumbers] = useState<ParsedPhone[]>([]);
+  const [duplicatesRemoved, setDuplicatesRemoved] = useState(0);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const parsePhoneNumbers = useCallback((text: string): string[] => {
-    const lines = text.split(/[\n,;]+/).map(l => l.trim()).filter(Boolean);
-    const phoneRegex = /\+?[\d\s\-().]{7,20}/g;
-    const numbers: Set<string> = new Set();
-    
-    for (const line of lines) {
-      const matches = line.match(phoneRegex);
-      if (matches) {
-        for (const match of matches) {
-          const cleaned = match.replace(/[\s\-().]/g, '');
-          if (cleaned.length >= 7 && cleaned.length <= 15) {
-            const normalized = cleaned.startsWith('+') ? cleaned : `+${cleaned}`;
-            numbers.add(normalized);
-          }
-        }
-      }
+  const handleParse = useCallback((text: string) => {
+    setError(null);
+    setInvalidNumbers([]);
+    setDuplicatesRemoved(0);
+
+    const result = parsePhoneNumbers(text);
+
+    if (result.valid.length === 0 && result.invalid.length === 0) {
+      setError('No phone numbers found. Enter numbers in international format (e.g., +919876543210).');
+      return;
     }
-    return Array.from(numbers);
+
+    setInvalidNumbers(result.invalid);
+    setDuplicatesRemoved(result.duplicatesRemoved);
+
+    if (result.valid.length > 100) {
+      setError(`Found ${result.valid.length} valid numbers. Maximum is 100 — only the first 100 will be used.`);
+      setParsedNumbers(result.valid.slice(0, 100));
+    } else {
+      setParsedNumbers(result.valid);
+    }
+
+    if (result.valid.length === 0 && result.invalid.length > 0) {
+      setError(`All ${result.invalid.length} number(s) failed validation. Numbers must have at least 10 digits.`);
+    }
   }, []);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -43,50 +53,29 @@ export function BulkUpload({ onValidate, isLoading }: BulkUploadProps) {
 
     setError(null);
     setFileName(file.name);
-    
+
     const ext = file.name.split('.').pop()?.toLowerCase();
-    
-    if (!['csv', 'txt', 'xlsx'].includes(ext || '')) {
-      setError('Unsupported file format. Please upload CSV, TXT, or XLSX files.');
+
+    if (!['csv', 'txt', 'xlsx', 'pdf'].includes(ext || '')) {
+      setError('Unsupported file format. Please upload CSV, TXT, XLSX, or PDF files.');
       return;
     }
 
     try {
       if (ext === 'csv' || ext === 'txt') {
         const text = await file.text();
-        const numbers = parsePhoneNumbers(text);
-        if (numbers.length === 0) {
-          setError('No valid phone numbers found in file.');
-          return;
-        }
-        if (numbers.length > 100) {
-          setError(`Found ${numbers.length} numbers. Maximum is 100. Only first 100 will be used.`);
-          setParsedNumbers(numbers.slice(0, 100));
-        } else {
-          setParsedNumbers(numbers);
-        }
+        handleParse(text);
       } else {
-        setError('For XLSX files, please copy and paste numbers directly. Client-side XLSX parsing not available.');
+        setError(`For ${ext?.toUpperCase()} files, please copy and paste numbers directly. Client-side parsing is limited to CSV and TXT.`);
       }
     } catch {
       setError('Failed to read file. Please try again.');
     }
-  }, [parsePhoneNumbers]);
+  }, [handleParse]);
 
   const handleManualParse = useCallback(() => {
-    setError(null);
-    const numbers = parsePhoneNumbers(manualInput);
-    if (numbers.length === 0) {
-      setError('No valid phone numbers found. Use international format (e.g., +919876543210).');
-      return;
-    }
-    if (numbers.length > 100) {
-      setError(`Found ${numbers.length} numbers. Maximum is 100. Only first 100 will be used.`);
-      setParsedNumbers(numbers.slice(0, 100));
-    } else {
-      setParsedNumbers(numbers);
-    }
-  }, [manualInput, parsePhoneNumbers]);
+    handleParse(manualInput);
+  }, [manualInput, handleParse]);
 
   const removeNumber = (index: number) => {
     setParsedNumbers(prev => prev.filter((_, i) => i !== index));
@@ -96,6 +85,15 @@ export function BulkUpload({ onValidate, isLoading }: BulkUploadProps) {
     if (parsedNumbers.length > 0) {
       onValidate(parsedNumbers);
     }
+  };
+
+  const handleClear = () => {
+    setParsedNumbers([]);
+    setInvalidNumbers([]);
+    setDuplicatesRemoved(0);
+    setManualInput('');
+    setFileName(null);
+    setError(null);
   };
 
   return (
@@ -135,13 +133,13 @@ export function BulkUpload({ onValidate, isLoading }: BulkUploadProps) {
             <Textarea
               value={manualInput}
               onChange={(e) => setManualInput(e.target.value)}
-              placeholder={`Enter phone numbers (one per line or comma-separated)\n\nExamples:\n+919876543210\n+14155552671\n+447911123456`}
+              placeholder={`Enter phone numbers (one per line or comma-separated)\n\nExamples:\n+919876543210\n+14155552671\n+447911123456\n9876543210`}
               className="min-h-[160px] font-mono text-sm bg-background/50 border-border"
               disabled={isLoading}
             />
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
-                Max 100 numbers. Use international format with country code.
+                Max 100 numbers • Minimum 10 digits each • International format preferred
               </p>
               <Button onClick={handleManualParse} variant="secondary" size="sm" disabled={!manualInput.trim()}>
                 Parse Numbers
@@ -176,7 +174,7 @@ export function BulkUpload({ onValidate, isLoading }: BulkUploadProps) {
               <input
                 type="file"
                 className="hidden"
-                accept=".csv,.txt,.xlsx"
+                accept=".csv,.txt,.xlsx,.pdf"
                 onChange={handleFileUpload}
                 disabled={isLoading}
               />
@@ -186,9 +184,34 @@ export function BulkUpload({ onValidate, isLoading }: BulkUploadProps) {
 
         {/* Error */}
         {error && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30 text-warning text-sm">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            {error}
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30 text-warning text-sm">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Invalid Numbers Feedback */}
+        {invalidNumbers.length > 0 && (
+          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 space-y-2">
+            <p className="text-xs font-medium text-destructive flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              {invalidNumbers.length} number(s) rejected (less than 10 digits):
+            </p>
+            <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+              {invalidNumbers.map((n, i) => (
+                <span key={i} className="px-2 py-0.5 rounded bg-destructive/10 text-destructive text-xs font-mono" title={n.error}>
+                  {n.original} — {n.error}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Dedup Info */}
+        {duplicatesRemoved > 0 && (
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/10 border border-primary/20 text-xs text-primary">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {duplicatesRemoved} duplicate(s) removed automatically.
           </div>
         )}
 
@@ -197,12 +220,12 @@ export function BulkUpload({ onValidate, isLoading }: BulkUploadProps) {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium text-foreground">
-                {parsedNumbers.length} numbers ready for validation
+                {parsedNumbers.length} valid number{parsedNumbers.length !== 1 ? 's' : ''} ready for validation
               </h4>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { setParsedNumbers([]); setManualInput(''); setFileName(null); }}
+                onClick={handleClear}
                 className="text-muted-foreground"
               >
                 Clear all
