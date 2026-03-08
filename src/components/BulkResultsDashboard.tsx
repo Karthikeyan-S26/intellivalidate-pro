@@ -10,7 +10,9 @@ import {
   Globe,
   Radio,
   Shield,
+  Download,
 } from "lucide-react";
+import { exportCSV, exportWhatsAppActiveCSV, exportWhatsAppNotActiveCSV } from "@/lib/exportResults";
 
 interface BulkResultsDashboardProps {
   whatsappActive: ValidationResult[];
@@ -87,6 +89,17 @@ export function BulkResultsDashboard({
 
   return (
     <div className="space-y-6">
+      {/* Export Bar */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => exportCSV(whatsappActive, whatsappNotActive)}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary/20 text-primary text-sm font-medium hover:bg-primary/30 transition-colors"
+        >
+          <Download className="w-4 h-4" />
+          Export All (CSV)
+        </button>
+      </div>
+
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <GlowCard variant="gradient" className="text-center py-4">
@@ -122,13 +135,22 @@ export function BulkResultsDashboard({
               </div>
             </div>
             {whatsappActive.length > 0 && (
-              <button
-                onClick={() => onSelectForMessaging(whatsappActive)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success/20 text-success text-xs font-medium hover:bg-success/30 transition-colors"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                Send Messages
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => exportWhatsAppActiveCSV(whatsappActive)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-success/10 text-success text-xs font-medium hover:bg-success/20 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  CSV
+                </button>
+                <button
+                  onClick={() => onSelectForMessaging(whatsappActive)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success/20 text-success text-xs font-medium hover:bg-success/30 transition-colors"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Send Messages
+                </button>
+              </div>
             )}
           </div>
           <div className="space-y-2 max-h-[400px] overflow-y-auto">
@@ -147,14 +169,25 @@ export function BulkResultsDashboard({
 
         {/* WhatsApp Not Active */}
         <GlowCard glowColor="warning">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="p-1.5 rounded-lg bg-warning/20">
-              <XCircle className="w-5 h-5 text-warning" />
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-warning/20">
+                <XCircle className="w-5 h-5 text-warning" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-foreground">No WhatsApp</h3>
+                <p className="text-xs text-muted-foreground">{whatsappNotActive.length} numbers</p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-foreground">No WhatsApp</h3>
-              <p className="text-xs text-muted-foreground">{whatsappNotActive.length} numbers</p>
-            </div>
+            {whatsappNotActive.length > 0 && (
+              <button
+                onClick={() => exportWhatsAppNotActiveCSV(whatsappNotActive)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-warning/10 text-warning text-xs font-medium hover:bg-warning/20 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                CSV
+              </button>
+            )}
           </div>
           <div className="space-y-2 max-h-[400px] overflow-y-auto">
             {whatsappNotActive.length === 0 ? (
