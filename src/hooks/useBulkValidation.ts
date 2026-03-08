@@ -6,12 +6,12 @@ import { extractDigits } from "@/lib/phoneValidation";
 
 const initialAgentStatuses: AgentStatus[] = [
   { name: 'orchestrator', displayName: 'Orchestrator', status: 'idle', icon: 'network' },
+  { name: 'decision', displayName: 'Decision', status: 'idle', icon: 'brain' },
   { name: 'validation', displayName: 'Validation', status: 'idle', icon: 'check' },
   { name: 'activity', displayName: 'Activity Detection', status: 'idle', icon: 'signal' },
-  { name: 'decision', displayName: 'Decision', status: 'idle', icon: 'brain' },
-  { name: 'retry', displayName: 'Retry & Recovery', status: 'idle', icon: 'refresh' },
   { name: 'whatsapp', displayName: 'WhatsApp', status: 'idle', icon: 'message' },
   { name: 'confidence', displayName: 'Confidence', status: 'idle', icon: 'chart' },
+  { name: 'retry', displayName: 'Retry & Recovery', status: 'idle', icon: 'refresh' },
 ];
 
 export function useBulkValidation() {
@@ -117,9 +117,10 @@ export function useBulkValidation() {
       addLog('orchestrator', `[${i + 1}/${uniqueNumbers.length}] Processing ${phone}`, 'info');
 
       try {
+        updateAgentStatus('decision', 'active');
         updateAgentStatus('validation', 'active');
         updateAgentStatus('activity', 'active');
-        updateAgentStatus('decision', 'active');
+        updateAgentStatus('whatsapp', 'active');
 
         const { data, error } = await supabase.functions.invoke('validate-phone', {
           body: { phoneNumber: numberPart, countryCode }
@@ -155,12 +156,10 @@ export function useBulkValidation() {
 
         allResults.push(result);
 
+        updateAgentStatus('decision', 'complete');
         updateAgentStatus('validation', 'complete');
         updateAgentStatus('activity', 'complete');
-        updateAgentStatus('decision', 'complete');
-        if (result.whatsappStatus !== 'unchecked') {
-          updateAgentStatus('whatsapp', 'complete');
-        }
+        updateAgentStatus('whatsapp', 'complete');
         updateAgentStatus('confidence', 'complete');
 
       } catch (err) {

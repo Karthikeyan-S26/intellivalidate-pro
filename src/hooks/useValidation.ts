@@ -5,11 +5,12 @@ import { v4 as uuidv4 } from "uuid";
 
 const initialAgentStatuses: AgentStatus[] = [
   { name: 'orchestrator', displayName: 'Orchestrator', status: 'idle', icon: 'network' },
-  { name: 'validation', displayName: 'Validation', status: 'idle', icon: 'check' },
   { name: 'decision', displayName: 'Decision', status: 'idle', icon: 'brain' },
-  { name: 'retry', displayName: 'Retry', status: 'idle', icon: 'refresh' },
+  { name: 'validation', displayName: 'Validation', status: 'idle', icon: 'check' },
+  { name: 'activity', displayName: 'Activity Detection', status: 'idle', icon: 'signal' },
   { name: 'whatsapp', displayName: 'WhatsApp', status: 'idle', icon: 'message' },
   { name: 'confidence', displayName: 'Confidence', status: 'idle', icon: 'chart' },
+  { name: 'retry', displayName: 'Retry & Recovery', status: 'idle', icon: 'refresh' },
 ];
 
 export function useValidation() {
@@ -47,7 +48,7 @@ export function useValidation() {
 
   const processServerLogs = useCallback((serverLogs: Array<{ agent: string; message: string; status: string; timestamp: string }>) => {
     // Group logs by agent and process them with delays for visual effect
-    const agentOrder: AgentType[] = ['orchestrator', 'validation', 'retry', 'decision', 'whatsapp', 'confidence'];
+    const agentOrder: AgentType[] = ['orchestrator', 'decision', 'validation', 'activity', 'whatsapp', 'confidence', 'retry'];
     
     serverLogs.forEach((log, index) => {
       setTimeout(() => {
