@@ -135,13 +135,22 @@ export function BulkResultsDashboard({
               </div>
             </div>
             {whatsappActive.length > 0 && (
-              <button
-                onClick={() => onSelectForMessaging(whatsappActive)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success/20 text-success text-xs font-medium hover:bg-success/30 transition-colors"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                Send Messages
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => exportWhatsAppActiveCSV(whatsappActive)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-success/10 text-success text-xs font-medium hover:bg-success/20 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  CSV
+                </button>
+                <button
+                  onClick={() => onSelectForMessaging(whatsappActive)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success/20 text-success text-xs font-medium hover:bg-success/30 transition-colors"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Send Messages
+                </button>
+              </div>
             )}
           </div>
           <div className="space-y-2 max-h-[400px] overflow-y-auto">
