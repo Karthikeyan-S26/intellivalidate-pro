@@ -19,9 +19,12 @@ interface AgentTerminalProps {
   isProcessing: boolean;
 }
 
+import { Signal } from "lucide-react";
+
 const agentConfig: Record<AgentType, { color: string; icon: typeof Bot }> = {
   orchestrator: { color: 'text-primary', icon: Network },
   validation: { color: 'text-success', icon: CheckCircle2 },
+  activity: { color: 'text-accent', icon: Signal },
   decision: { color: 'text-accent', icon: Brain },
   retry: { color: 'text-warning', icon: RefreshCw },
   whatsapp: { color: 'text-green-400', icon: MessageSquare },
