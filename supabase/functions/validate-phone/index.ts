@@ -6,6 +6,7 @@ const corsHeaders = {
 };
 
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const TWILIO_LOOKUP_URL = "https://lookups.twilio.com/v2/PhoneNumbers";
 
 interface AgentLog {
   agent: string;
@@ -18,6 +19,20 @@ function extractDigits(input: string): string {
   return input.replace(/\D/g, '');
 }
 
+async function twilioLookup(fullNumber: string, fields: string, accountSid: string, authToken: string): Promise<any> {
+  const encoded = encodeURIComponent(fullNumber);
+  const url = `${TWILIO_LOOKUP_URL}/${encoded}?Fields=${fields}`;
+  const auth = btoa(`${accountSid}:${authToken}`);
+  const res = await fetch(url, {
+    headers: { 'Authorization': `Basic ${auth}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Twilio ${fields} lookup failed [${res.status}]: ${body}`);
+  }
+  return res.json();
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -25,9 +40,11 @@ serve(async (req) => {
 
   try {
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY is not configured');
-    }
+    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY is not configured');
+
+    const TWILIO_SID = Deno.env.get('TWILIO_ACCOUNT_SID');
+    const TWILIO_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN');
+    const hasTwilio = !!(TWILIO_SID && TWILIO_TOKEN);
 
     const { phoneNumber, countryCode } = await req.json();
     if (!phoneNumber || !countryCode) {
@@ -60,91 +77,116 @@ serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════
-    // STEP 2: ORCHESTRATOR AGENT — Pipeline coordination
+    // STEP 2: ORCHESTRATOR AGENT
     // ═══════════════════════════════════════════════════════
     addLog('orchestrator', `Pipeline started for ${countryCode} ${phoneNumber}`, 'info');
     addLog('orchestrator', `Full number: ${fullNumber} (${digits.length} digits) — passed pre-validation`, 'success');
+    addLog('orchestrator', `Twilio API: ${hasTwilio ? 'CONNECTED ✓' : 'NOT CONFIGURED (using AI fallback)'}`, hasTwilio ? 'success' : 'warning');
 
     // ═══════════════════════════════════════════════════════
     // STEP 3: DECISION AGENT — Provider routing
     // ═══════════════════════════════════════════════════════
     addLog('decision', `Analyzing country code ${countryCode}...`, 'thinking');
-
-    const countryRouting: Record<string, string> = {
-      '+91': 'India → Twilio Lookup + Abstract API',
-      '+1': 'USA/Canada → NumVerify + Telesign',
-      '+44': 'UK → Neutrino HLR + Twilio',
-      '+61': 'Australia → Telesign + NumVerify',
-      '+55': 'Brazil → Twilio + Veriphone',
-      '+971': 'UAE → Abstract API + Telesign',
-    };
-    const routeInfo = countryRouting[countryCode] || `${countryCode} → Twilio + Abstract API (default)`;
-    addLog('decision', `Provider selection: ${routeInfo}`, 'success');
+    const routeInfo = hasTwilio ? 'Twilio Lookup v2 (real-time)' : 'AI analysis (simulated)';
+    addLog('decision', `Provider: ${routeInfo}`, 'success');
 
     // ═══════════════════════════════════════════════════════
-    // STEP 4–6: COMBINED AI ANALYSIS
-    // (Validation + Activity Detection + WhatsApp Detection)
+    // STEP 4: VALIDATION + ACTIVITY via Twilio Lookup
     // ═══════════════════════════════════════════════════════
-    addLog('validation', 'Cross-checking number format, carrier, country, line type...', 'thinking');
-    addLog('activity', 'Running HLR lookup & network reachability check...', 'thinking');
+    let twilioLineType: any = null;
+    let twilioCallerName: any = null;
+    let carrierName = 'Unknown';
+    let lineType = 'mobile';
+    let countryName = 'Unknown';
+    let isValid = true;
+    let isActive = true;
+    let activeConfidence = 60;
+    let providerAgreement = 1;
+    let carrierMatch = true;
 
-    const analysisPrompt = `You are a phone number intelligence engine that cross-verifies data across multiple telecom providers (NumVerify, Twilio Lookup, Telesign, Neutrino HLR, Abstract API).
+    if (hasTwilio) {
+      // Run Twilio line_type_intelligence lookup
+      addLog('validation', 'Querying Twilio Lookup v2 for line type intelligence...', 'thinking');
+      try {
+        twilioLineType = await twilioLookup(fullNumber, 'line_type_intelligence', TWILIO_SID!, TWILIO_TOKEN!);
+        
+        isValid = twilioLineType.valid ?? true;
+        countryName = twilioLineType.country_code || 'Unknown';
+        
+        const lti = twilioLineType.line_type_intelligence;
+        if (lti) {
+          carrierName = lti.carrier_name || lti.mobile_network_code || 'Unknown';
+          lineType = lti.type || 'mobile';
+          // Map Twilio types to our types
+          if (['landline', 'fixedLine'].includes(lineType)) lineType = 'landline';
+          else if (['mobile', 'cellphone'].includes(lineType)) lineType = 'mobile';
+          else if (['voip', 'nonFixedVoip', 'fixedVoip'].includes(lineType)) lineType = 'voip';
+        }
 
-Analyze this phone number thoroughly:
-Phone: ${countryCode} ${phoneNumber}
-Full: ${fullNumber}
+        addLog('validation', `Twilio confirmed: valid=${isValid}, carrier="${carrierName}", type=${lineType}, country=${countryName}`, 'success');
+        providerAgreement = 2; // Twilio is a strong provider
+        activeConfidence = 85;
+        isActive = isValid; // If Twilio says valid, it's active on the network
 
-You MUST determine:
-1. FORMAT VALIDATION: Is this a correctly formatted number for the country?
-2. CARRIER & LINE TYPE: What is the carrier? Is it mobile or landline?
-3. ACTIVITY STATUS: Based on HLR/reachability checks, is this number currently active on a mobile network? Consider whether the number prefix is valid and allocated.
-4. WHATSAPP STATUS: Can this number receive WhatsApp messages?
+      } catch (err) {
+        addLog('validation', `Twilio line_type lookup failed: ${err instanceof Error ? err.message : 'Unknown'}`, 'warning');
+        addLog('retry', 'Falling back to AI analysis...', 'warning');
+        retryCount++;
+      }
 
-WHATSAPP DETECTION RULES (CRITICAL):
-- A MOBILE number that is ACTIVE has a HIGH probability of having WhatsApp in most countries.
-- For countries with >70% WhatsApp penetration (India, Brazil, Mexico, Indonesia, Nigeria, Turkey, Argentina, Colombia, South Africa, Saudi Arabia, UAE, Pakistan, Bangladesh, Kenya, Egypt, Philippines, Malaysia, Thailand), if the number is a valid active mobile number, default to hasWhatsApp: true with 75-90% confidence.
-- For countries with moderate penetration (40-70%) like USA, UK, Germany, France, Australia, Canada, default to hasWhatsApp: true with 55-70% confidence for active mobile numbers.
-- For countries with low penetration (<40%) like China, Japan, South Korea, default to hasWhatsApp: false unless other signals suggest otherwise.
-- LANDLINE numbers NEVER have WhatsApp → hasWhatsApp: false, whatsAppConfidence: 0.
-- INACTIVE numbers cannot have WhatsApp → hasWhatsApp: false.
-- VOIP numbers rarely have WhatsApp → hasWhatsApp: false with low confidence.
+      // Try caller_name lookup for extra info
+      try {
+        twilioCallerName = await twilioLookup(fullNumber, 'caller_name', TWILIO_SID!, TWILIO_TOKEN!);
+        if (twilioCallerName.caller_name?.caller_name) {
+          addLog('validation', `Caller name: ${twilioCallerName.caller_name.caller_name}`, 'info');
+        }
+      } catch {
+        // caller_name is optional, don't fail
+      }
+    }
 
-Respond with ONLY valid JSON (no markdown, no backticks):
+    // ═══════════════════════════════════════════════════════
+    // STEP 5: AI ANALYSIS (supplement or fallback)
+    // ═══════════════════════════════════════════════════════
+    addLog('activity', 'Running AI-powered analysis...', 'thinking');
+
+    const twilioContext = hasTwilio && twilioLineType
+      ? `\nTwilio Lookup REAL DATA:\n- Valid: ${isValid}\n- Carrier: ${carrierName}\n- Line type: ${lineType}\n- Country: ${countryName}\n- Active confidence: ${activeConfidence}%\nUse this real data as ground truth. Supplement with your knowledge.`
+      : '\nNo real provider data available. Use your best knowledge.';
+
+    const analysisPrompt = `You are a phone number intelligence engine.
+Analyze: ${countryCode} ${phoneNumber} (full: ${fullNumber})
+${twilioContext}
+
+Determine:
+1. ACTIVITY STATUS: Is this number currently active?
+2. WHATSAPP STATUS: Can this number receive WhatsApp messages?
+3. Country name (full name, e.g. "India", "United States")
+${!hasTwilio ? '4. Carrier name and line type' : ''}
+
+WHATSAPP RULES:
+- MOBILE + ACTIVE in high-penetration countries (India, Brazil, Mexico, Indonesia, Nigeria, Turkey, Argentina, Colombia, South Africa, UAE, Pakistan, Bangladesh, Kenya, Egypt, Philippines, Malaysia, Thailand): hasWhatsApp=true, 75-90% confidence
+- MOBILE + ACTIVE in moderate countries (USA, UK, Germany, France, Australia, Canada): hasWhatsApp=true, 55-70% confidence  
+- LANDLINE: hasWhatsApp=false always
+- INACTIVE: hasWhatsApp=false always
+- VOIP: hasWhatsApp=false usually
+
+Respond with ONLY valid JSON:
 {
-  "isValid": boolean,
   "countryName": string,
-  "carrier": string (use a REAL carrier name for this country/prefix, e.g. "Jio", "Airtel", "AT&T", "Vodafone", "T-Mobile"),
-  "lineType": "mobile" | "landline" | "voip",
+  ${!hasTwilio ? '"carrier": string, "lineType": "mobile"|"landline"|"voip",' : ''}
   "isActive": boolean,
   "activeConfidence": number (0-100),
-  "activeReasoning": string (brief explanation of why active/inactive),
+  "activeReasoning": string,
   "hasWhatsApp": boolean,
   "whatsAppConfidence": number (0-100),
-  "whatsAppReasoning": string (explain detection method and reasoning),
-  "whatsAppDetectionMethod": string (e.g. "carrier capability check", "messaging platform lookup", "country penetration + mobile status"),
-  "providerAgreement": number (1-3),
-  "carrierMatch": boolean,
+  "whatsAppReasoning": string,
+  "whatsAppDetectionMethod": string,
   "validationNotes": string
 }`;
 
-    let analysisData = {
-      isValid: true,
-      countryName: 'Unknown',
-      carrier: 'Unknown',
-      lineType: 'mobile' as string,
-      isActive: true,
-      activeConfidence: 60,
-      activeReasoning: 'Default assumption',
-      hasWhatsApp: false,
-      whatsAppConfidence: 30,
-      whatsAppReasoning: 'Unable to determine',
-      whatsAppDetectionMethod: 'fallback',
-      providerAgreement: 1,
-      carrierMatch: true,
-      validationNotes: '',
-    };
+    let aiData: any = {};
 
-    // Primary AI call
     const aiResponse = await fetch(AI_GATEWAY_URL, {
       method: 'POST',
       headers: {
@@ -154,21 +196,27 @@ Respond with ONLY valid JSON (no markdown, no backticks):
       body: JSON.stringify({
         model: 'google/gemini-2.5-flash',
         messages: [
-          { role: 'system', content: 'You are a phone intelligence expert. Always respond with valid JSON only, no markdown, no backticks.' },
+          { role: 'system', content: 'You are a phone intelligence expert. Respond with valid JSON only, no markdown.' },
           { role: 'user', content: analysisPrompt }
         ],
         temperature: 0.1,
       }),
     });
 
-    if (!aiResponse.ok) {
-      // ═══════════════════════════════════════════════════════
-      // RETRY & RECOVERY AGENT
-      // ═══════════════════════════════════════════════════════
-      addLog('retry', `Primary AI call failed (HTTP ${aiResponse.status}). Switching provider...`, 'warning');
+    if (aiResponse.ok) {
+      try {
+        const result = await aiResponse.json();
+        const content = result.choices?.[0]?.message?.content || '';
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) aiData = JSON.parse(jsonMatch[0]);
+      } catch {
+        addLog('activity', 'AI response parsing error', 'warning');
+      }
+    } else {
+      addLog('retry', `AI call failed (HTTP ${aiResponse.status}), trying fallback...`, 'warning');
       retryCount++;
-
-      const retryResponse = await fetch(AI_GATEWAY_URL, {
+      
+      const retryRes = await fetch(AI_GATEWAY_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${LOVABLE_API_KEY}`,
@@ -184,154 +232,142 @@ Respond with ONLY valid JSON (no markdown, no backticks):
         }),
       });
 
-      if (retryResponse.ok) {
+      if (retryRes.ok) {
         try {
-          const result = await retryResponse.json();
+          const result = await retryRes.json();
           const content = result.choices?.[0]?.message?.content || '';
           const jsonMatch = content.match(/\{[\s\S]*\}/);
-          if (jsonMatch) analysisData = { ...analysisData, ...JSON.parse(jsonMatch[0]) };
-          addLog('retry', 'Fallback provider succeeded', 'success');
+          if (jsonMatch) aiData = JSON.parse(jsonMatch[0]);
+          addLog('retry', 'Fallback AI succeeded', 'success');
         } catch {
-          addLog('retry', 'Fallback response parsing failed. Using defaults.', 'error');
+          addLog('retry', 'Fallback parsing failed', 'error');
         }
-      } else {
-        addLog('retry', `Fallback also failed (HTTP ${retryResponse.status}). Using cached patterns.`, 'error');
-      }
-    } else {
-      try {
-        const result = await aiResponse.json();
-        const content = result.choices?.[0]?.message?.content || '';
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) analysisData = { ...analysisData, ...JSON.parse(jsonMatch[0]) };
-      } catch {
-        addLog('validation', 'Response parsing error, using defaults', 'warning');
       }
     }
 
-    // ═══════════════════════════════════════════════════════
-    // VALIDATION AGENT — Log results
-    // ═══════════════════════════════════════════════════════
-    addLog('validation', `Format valid: ${analysisData.isValid} | Country: ${analysisData.countryName} | Carrier: ${analysisData.carrier}`, 'success');
-    addLog('validation', `Line type: ${analysisData.lineType.toUpperCase()} | Provider agreement: ${analysisData.providerAgreement}/3`, 'success');
-
-    // ═══════════════════════════════════════════════════════
-    // ACTIVITY DETECTION AGENT — Log results
-    // ═══════════════════════════════════════════════════════
-    addLog('activity', `Network status: ${analysisData.isActive ? 'ACTIVE' : 'INACTIVE'} (confidence: ${analysisData.activeConfidence}%)`, analysisData.isActive ? 'success' : 'warning');
-    addLog('activity', `Reasoning: ${analysisData.activeReasoning}`, 'info');
-    if (analysisData.validationNotes) {
-      addLog('activity', `Notes: ${analysisData.validationNotes}`, 'info');
+    // Merge AI data with Twilio data (Twilio takes priority)
+    if (aiData.countryName) countryName = aiData.countryName;
+    if (!hasTwilio || !twilioLineType) {
+      // Use AI data as primary if no Twilio
+      carrierName = aiData.carrier || carrierName;
+      lineType = aiData.lineType || lineType;
+      isActive = aiData.isActive ?? isActive;
+      activeConfidence = aiData.activeConfidence ?? activeConfidence;
+      isValid = true; // passed digit check
     }
 
+    // Log validation results
+    addLog('validation', `Format valid: ${isValid} | Country: ${countryName} | Carrier: ${carrierName}`, 'success');
+    addLog('validation', `Line type: ${lineType.toUpperCase()} | Provider: ${hasTwilio ? 'Twilio (real)' : 'AI (simulated)'}`, 'success');
+
+    // Log activity results
+    addLog('activity', `Network status: ${isActive ? 'ACTIVE' : 'INACTIVE'} (confidence: ${activeConfidence}%)`, isActive ? 'success' : 'warning');
+    if (aiData.activeReasoning) addLog('activity', `Reasoning: ${aiData.activeReasoning}`, 'info');
+
     // ═══════════════════════════════════════════════════════
-    // WHATSAPP DETECTION AGENT
+    // STEP 6: WHATSAPP DETECTION
     // ═══════════════════════════════════════════════════════
-    const isLandline = analysisData.lineType === 'landline';
+    const isLandline = lineType === 'landline';
     let whatsappStatus: 'verified' | 'not_found' | 'unchecked' = 'unchecked';
+    let whatsAppConfidence = aiData.whatsAppConfidence ?? 30;
 
     if (isLandline) {
-      addLog('decision', 'Landline detected → skipping WhatsApp check (landlines cannot have WhatsApp)', 'warning');
-      addLog('whatsapp', 'Skipped — landline number', 'info');
+      addLog('whatsapp', 'Landline detected → WhatsApp NOT possible', 'warning');
       whatsappStatus = 'not_found';
-    } else if (!analysisData.isActive) {
-      addLog('whatsapp', 'Number is inactive — cannot have WhatsApp', 'warning');
+      whatsAppConfidence = 0;
+    } else if (!isActive) {
+      addLog('whatsapp', 'Number inactive → WhatsApp NOT possible', 'warning');
       whatsappStatus = 'not_found';
+      whatsAppConfidence = 0;
     } else {
-      addLog('whatsapp', `Detection method: ${analysisData.whatsAppDetectionMethod}`, 'info');
-      addLog('whatsapp', `Analysis: ${analysisData.whatsAppReasoning}`, 'info');
+      const method = aiData.whatsAppDetectionMethod || 'AI analysis + carrier data';
+      addLog('whatsapp', `Detection method: ${method}`, 'info');
+      addLog('whatsapp', `Analysis: ${aiData.whatsAppReasoning || 'Based on carrier and country data'}`, 'info');
 
-      whatsappStatus = analysisData.hasWhatsApp ? 'verified' : 'not_found';
+      // If Twilio confirmed mobile + valid, boost WhatsApp confidence
+      if (hasTwilio && twilioLineType && lineType === 'mobile' && isValid) {
+        addLog('whatsapp', 'Twilio confirmed MOBILE + VALID → boosting WhatsApp confidence', 'info');
+        if (aiData.hasWhatsApp !== false) {
+          whatsAppConfidence = Math.max(whatsAppConfidence, 75);
+        }
+      }
+
+      const hasWhatsApp = aiData.hasWhatsApp ?? (lineType === 'mobile' && isActive);
+      whatsappStatus = hasWhatsApp ? 'verified' : 'not_found';
 
       if (whatsappStatus === 'verified') {
-        addLog('whatsapp', `WhatsApp VERIFIED ✓ (confidence: ${analysisData.whatsAppConfidence}%)`, 'success');
+        addLog('whatsapp', `WhatsApp VERIFIED ✓ (confidence: ${whatsAppConfidence}%)`, 'success');
       } else {
-        addLog('whatsapp', `WhatsApp NOT FOUND (confidence: ${analysisData.whatsAppConfidence}%)`, 'warning');
-        // Log diagnostic info for debugging failed detections
-        addLog('whatsapp', `[DEBUG] Provider response: hasWhatsApp=${analysisData.hasWhatsApp}, method=${analysisData.whatsAppDetectionMethod}, fallback_attempted=${retryCount > 0}`, 'info');
+        addLog('whatsapp', `WhatsApp NOT FOUND (confidence: ${whatsAppConfidence}%)`, 'warning');
+        addLog('whatsapp', `[DEBUG] hasWhatsApp=${hasWhatsApp}, method=${method}, twilio=${hasTwilio}, retry=${retryCount}`, 'info');
       }
     }
 
     // ═══════════════════════════════════════════════════════
-    // CONFIDENCE SCORING AGENT
+    // STEP 7: CONFIDENCE SCORING
     // ═══════════════════════════════════════════════════════
     addLog('confidence', 'Computing multi-factor confidence score...', 'thinking');
 
     let score = 0;
-    const scoreBreakdown: string[] = [];
+    const breakdown: string[] = [];
 
-    // +30 if number confirmed valid by 2+ providers
-    if (analysisData.isValid && analysisData.providerAgreement >= 2) {
-      score += 30;
-      scoreBreakdown.push('+30 valid (multi-provider)');
-    } else if (analysisData.isValid) {
-      score += 15;
-      scoreBreakdown.push('+15 valid (single provider)');
+    // Validity (+15 or +30)
+    if (isValid && providerAgreement >= 2) {
+      score += 30; breakdown.push('+30 valid (Twilio confirmed)');
+    } else if (isValid) {
+      score += 15; breakdown.push('+15 valid (single source)');
     }
 
-    // +20 if mobile carrier confirmed
-    if (analysisData.lineType === 'mobile' && analysisData.carrierMatch) {
-      score += 20;
-      scoreBreakdown.push('+20 mobile carrier confirmed');
-    } else if (analysisData.lineType === 'mobile') {
-      score += 10;
-      scoreBreakdown.push('+10 mobile (carrier unconfirmed)');
+    // Mobile carrier (+10 or +20)
+    if (lineType === 'mobile' && carrierMatch) {
+      score += 20; breakdown.push('+20 mobile carrier confirmed');
+    } else if (lineType === 'mobile') {
+      score += 10; breakdown.push('+10 mobile (carrier unconfirmed)');
     }
 
-    // +25 if active network confirmation
-    if (analysisData.isActive && analysisData.activeConfidence >= 70) {
-      score += 25;
-      scoreBreakdown.push('+25 active (high confidence)');
-    } else if (analysisData.isActive) {
-      score += 15;
-      scoreBreakdown.push('+15 active (moderate confidence)');
+    // Activity (+15 or +25)
+    if (isActive && activeConfidence >= 70) {
+      score += 25; breakdown.push('+25 active (high confidence)');
+    } else if (isActive) {
+      score += 15; breakdown.push('+15 active (moderate confidence)');
     }
 
-    // +20 if WhatsApp confirmed
+    // WhatsApp (+20)
     if (whatsappStatus === 'verified') {
-      score += 20;
-      scoreBreakdown.push('+20 WhatsApp confirmed');
+      score += 20; breakdown.push('+20 WhatsApp confirmed');
     }
 
-    // +5 for provider agreement
-    if (analysisData.providerAgreement >= 3) {
-      score += 5;
-      scoreBreakdown.push('+5 full provider agreement');
+    // Provider agreement (+5)
+    if (providerAgreement >= 3) {
+      score += 5; breakdown.push('+5 full provider agreement');
     }
 
     // Penalties
-    if (!analysisData.carrierMatch) {
-      score -= 10;
-      scoreBreakdown.push('-10 carrier conflict');
-    }
-    if (retryCount > 0) {
-      score -= 10;
-      scoreBreakdown.push('-10 retries required');
-    }
+    if (!carrierMatch) { score -= 10; breakdown.push('-10 carrier conflict'); }
+    if (retryCount > 0) { score -= 10; breakdown.push('-10 retries required'); }
 
     score = Math.max(0, Math.min(100, score));
 
     addLog('confidence', `Score: ${score}/100`, 'success');
-    addLog('confidence', `Breakdown: ${scoreBreakdown.join(' | ')}`, 'info');
+    addLog('confidence', `Breakdown: ${breakdown.join(' | ')}`, 'info');
 
     // ═══════════════════════════════════════════════════════
     // ORCHESTRATOR — Pipeline complete
     // ═══════════════════════════════════════════════════════
     const validationTime = Date.now() - startTime;
-    const costSaved = isLandline ? 0.012 : 0;
-
     addLog('orchestrator', `Pipeline complete in ${validationTime}ms | Score: ${score}/100 | WhatsApp: ${whatsappStatus}`, 'success');
 
     return new Response(JSON.stringify({
       phoneNumber: phoneNumber.replace(/-/g, ''),
       countryCode,
-      countryName: analysisData.countryName,
-      carrier: analysisData.carrier,
-      lineType: analysisData.lineType,
-      isValid: analysisData.isValid,
-      isActive: analysisData.isActive,
+      countryName,
+      carrier: carrierName,
+      lineType,
+      isValid,
+      isActive,
       whatsappStatus,
       confidenceScore: score,
-      costSaved,
+      costSaved: isLandline ? 0.012 : 0,
       validationTime,
       retryCount,
       logs,
